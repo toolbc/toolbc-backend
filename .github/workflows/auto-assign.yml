@@ -1,0 +1,9 @@
+name: Auto Assign
+on:
+  issues:
+    types: [opened]
+jobs:
+  assign:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Auto assign'
