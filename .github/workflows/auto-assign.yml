@@ -2,8 +2,18 @@ name: Auto Assign
 on:
   issues:
     types: [opened]
+  pull_request:
+    types: [opened]
 jobs:
   assign:
     runs-on: ubuntu-latest
     steps:
-      - run: echo 'Auto assign'
+      - uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.addAssignees({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              assignees: [context.actor]
+            })
