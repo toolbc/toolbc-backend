@@ -145,6 +145,21 @@ public static class ToolbcEndpoints
         api.MapPatch("/reminders/{id:guid}/status", UpdateReminderStatusAsync)
             .RequireAuthorization("DoctorOnly");
 
+        api.MapPost("/doctor/patients/{patientProfileId:guid}/transition-phase", TransitionPhaseAsync)
+            .RequireAuthorization("DoctorOnly");
+
+        api.MapPost("/patient/weight", RecordWeightAsync)
+            .RequireAuthorization("PatientOnly");
+
+        api.MapGet("/doctor/patients/{patientProfileId:guid}/weight-history", GetWeightHistoryAsync)
+            .RequireAuthorization("DoctorOnly");
+
+        api.MapPost("/doctor/patients/{patientProfileId:guid}/lab-results", AddLabResultAsync)
+            .RequireAuthorization("DoctorOnly");
+
+        api.MapGet("/doctor/patients/{patientProfileId:guid}/lab-results", GetLabResultsAsync)
+            .RequireAuthorization("DoctorOnly");
+
         return app;
     }
 
@@ -159,11 +174,24 @@ public static class ToolbcEndpoints
             return Results.NotFound(new { error = "Profil pasien belum tersedia." });
         }
 
-        var notifications = await db.Notifications
+        var now = DateTimeOffset.UtcNow;
+        var overdueDoses = profile.TreatmentPlan.DoseLogs
+            .Where(log => log.Status == DoseStatus.Pending && log.ScheduledAt <= now.AddHours(-12))
+            .ToList();
+            
+        if (overdueDoses.Count > 0)
+        {
+            foreach (var dose in overdueDoses)
+            {
+                dose.Status = DoseStatus.Missed;
+            }
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+
+        var notifications = (await db.Notifications
             .AsNoTracking()
             .Where(notification => notification.UserId == profile.UserId)
-            .OrderByDescending(notification => notification.CreatedAt)
-            .Take(5)
             .Select(notification => new NotificationDto(
                 notification.Id,
                 notification.Type,
@@ -171,7 +199,10 @@ public static class ToolbcEndpoints
                 notification.Message,
                 notification.IsRead,
                 notification.CreatedAt))
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken))
+            .OrderByDescending(notification => notification.CreatedAt)
+            .Take(5)
+            .ToList();
 
         return Results.Ok(new PatientDashboardResponse(
             AuthService.ToUserResponse(profile.User),
@@ -192,13 +223,14 @@ public static class ToolbcEndpoints
 
         if (string.Equals(request.DoseLogId, "today", StringComparison.OrdinalIgnoreCase))
         {
-            doseLog = await db.MedicationDoseLogs
+            doseLog = (await db.MedicationDoseLogs
                 .AsTracking()
                 .Include(log => log.TreatmentPlan)
                 .ThenInclude(plan => plan.PatientProfile)
                 .Where(log => log.TreatmentPlan.PatientProfile.UserId == userId && log.Status == DoseStatus.Pending)
+                .ToListAsync(cancellationToken))
                 .OrderBy(log => log.ScheduledAt)
-                .FirstOrDefaultAsync(cancellationToken);
+                .FirstOrDefault();
         }
         else if (Guid.TryParse(request.DoseLogId, out var parsedGuid))
         {
@@ -292,9 +324,10 @@ public static class ToolbcEndpoints
             return Results.NotFound(new { error = "Profil pasien belum tersedia." });
         }
 
-        var doseItems = await db.MedicationDoseLogs
+        var doseItems = (await db.MedicationDoseLogs
             .AsNoTracking()
             .Where(log => log.TreatmentPlanId == profile.TreatmentPlan.Id)
+            .ToListAsync(cancellationToken))
             .OrderByDescending(log => log.ScheduledAt)
             .Take(20)
             .Select(log => new HistoryItemDto(
@@ -302,11 +335,12 @@ public static class ToolbcEndpoints
                 log.Notes ?? log.ScheduledAt.ToString("u"),
                 "medication",
                 log.ConfirmedAt ?? log.ScheduledAt))
-            .ToListAsync(cancellationToken);
+            .ToList();
 
-        var symptomItems = await db.SymptomLogs
+        var symptomItems = (await db.SymptomLogs
             .AsNoTracking()
             .Where(log => log.PatientProfileId == profile.Id)
+            .ToListAsync(cancellationToken))
             .OrderByDescending(log => log.LoggedAt)
             .Take(20)
             .Select(log => new HistoryItemDto(
@@ -314,7 +348,7 @@ public static class ToolbcEndpoints
                 $"{log.RiskLevel} risk feedback",
                 "symptom",
                 log.LoggedAt))
-            .ToListAsync(cancellationToken);
+            .ToList();
 
         return Results.Ok(doseItems.Concat(symptomItems).OrderByDescending(item => item.CreatedAt).ToList());
     }
@@ -334,8 +368,7 @@ public static class ToolbcEndpoints
             query = query.Where(notification => notification.Type == type.Value);
         }
 
-        var response = await query
-            .OrderByDescending(notification => notification.CreatedAt)
+        var response = (await query
             .Select(notification => new NotificationDto(
                 notification.Id,
                 notification.Type,
@@ -343,7 +376,9 @@ public static class ToolbcEndpoints
                 notification.Message,
                 notification.IsRead,
                 notification.CreatedAt))
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken))
+            .OrderByDescending(notification => notification.CreatedAt)
+            .ToList();
 
         return Results.Ok(response);
     }
@@ -393,20 +428,20 @@ public static class ToolbcEndpoints
         }
 
         var patientIds = doctor.Patients.Select(patient => patient.Id).ToArray();
-        var latestRisks = await db.SymptomLogs
+        var allSymptomLogs = await db.SymptomLogs
             .Where(log => patientIds.Contains(log.PatientProfileId))
+            .ToListAsync(cancellationToken);
+        var latestRisks = allSymptomLogs
             .GroupBy(log => log.PatientProfileId)
-            .Select(group => new
-            {
-                PatientProfileId = group.Key,
-                RiskLevel = group.OrderByDescending(log => log.LoggedAt).First().RiskLevel
-            })
-            .ToDictionaryAsync(item => item.PatientProfileId, item => item.RiskLevel, cancellationToken);
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(log => log.LoggedAt).First().RiskLevel);
 
         var response = doctor.Patients.Select(patient =>
         {
             var summary = BuildTreatmentSummary(patient);
             var risk = latestRisks.TryGetValue(patient.Id, out var r) ? r : RiskLevel.Low;
+            var phaseTransitionDue = summary.TreatmentDay >= 56 && patient.TreatmentPlan?.Phase == TreatmentPhase.Intensive;
             return new DoctorPatientDto(
                 patient.Id,
                 patient.User.FullName,
@@ -414,7 +449,9 @@ public static class ToolbcEndpoints
                 summary.TreatmentDay,
                 summary.AdherencePercent,
                 risk,
-                summary.AdherencePercent < 80 ? "Needs review" : "Stable");
+                summary.AdherencePercent < 80 ? "Needs review" : "Stable",
+                phaseTransitionDue,
+                patient.Weight);
         });
 
         return Results.Ok(response.ToList());
@@ -454,11 +491,12 @@ public static class ToolbcEndpoints
         }
 
         var patientIds = doctor.Patients.Select(patient => patient.Id).ToArray();
-        var reminders = await db.Reminders
+        var reminders = (await db.Reminders
             .AsNoTracking()
             .Include(reminder => reminder.PatientProfile)
             .ThenInclude(patient => patient.User)
             .Where(reminder => patientIds.Contains(reminder.PatientProfileId))
+            .ToListAsync(cancellationToken))
             .OrderByDescending(reminder => reminder.ScheduledAt)
             .Select(reminder => new ReminderDto(
                 reminder.Id,
@@ -466,7 +504,7 @@ public static class ToolbcEndpoints
                 reminder.Message,
                 reminder.Status,
                 reminder.ScheduledAt))
-            .ToListAsync(cancellationToken);
+            .ToList();
 
         return Results.Ok(reminders);
     }
@@ -560,7 +598,8 @@ public static class ToolbcEndpoints
             adherence,
             streak,
             plan.MedicineSummary,
-            nextDose is null ? "No pending dose" : nextDose.ScheduledAt.ToLocalTime().ToString("ddd HH:mm"));
+            nextDose is null ? "No pending dose" : nextDose.ScheduledAt.ToLocalTime().ToString("ddd HH:mm"),
+            plan.Phase);
     }
 
     private static RiskLevel AnalyzeRisk(SymptomLogRequest request)
@@ -612,5 +651,168 @@ public static class ToolbcEndpoints
         }
 
         return streak;
+    }
+
+    private static async Task<IResult> TransitionPhaseAsync(
+        Guid patientProfileId,
+        ClaimsPrincipal principal,
+        ToolbcDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var doctorId = principal.GetUserId();
+        var patient = await db.PatientProfiles
+            .Include(p => p.TreatmentPlan)
+            .Include(p => p.User)
+            .Include(p => p.AssignedDoctor)
+            .FirstOrDefaultAsync(p => p.Id == patientProfileId && p.AssignedDoctor!.UserId == doctorId, cancellationToken);
+
+        if (patient is null || patient.TreatmentPlan is null)
+        {
+            return Results.NotFound(new { error = "Pasien tidak ditemukan atau bukan pasien Anda." });
+        }
+
+        var plan = patient.TreatmentPlan;
+        if (plan.Phase == TreatmentPhase.Intensive)
+        {
+            plan.Phase = TreatmentPhase.Continuation;
+            plan.MedicineSummary = "Isoniazid (H) + Rifampicin (R)";
+        }
+        else if (plan.Phase == TreatmentPhase.Continuation)
+        {
+            plan.Phase = TreatmentPhase.Completed;
+            plan.Status = TreatmentStatus.Completed;
+        }
+
+        db.Notifications.Add(new AppNotification
+        {
+            UserId = patient.UserId,
+            Type = NotificationType.Alert,
+            Title = "Fase Pengobatan Diperbarui",
+            Message = $"Fase pengobatan Anda sekarang adalah {plan.Phase}.",
+            IsRead = false
+        });
+
+        await db.SaveChangesAsync(cancellationToken);
+        return Results.Ok(new { plan.Phase, plan.MedicineSummary });
+    }
+
+    private static async Task<IResult> RecordWeightAsync(
+        WeightRequest request,
+        ClaimsPrincipal principal,
+        ToolbcDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var userId = principal.GetUserId();
+        var patient = await db.PatientProfiles.FirstOrDefaultAsync(p => p.UserId == userId, cancellationToken);
+        
+        if (patient is null)
+        {
+            return Results.NotFound(new { error = "Profil pasien tidak ditemukan." });
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        patient.Weight = request.Weight;
+        patient.WeightRecordedAt = now;
+
+        var weightLog = new WeightLog
+        {
+            PatientProfileId = patient.Id,
+            Weight = request.Weight,
+            RecordedAt = now,
+            Notes = request.Notes
+        };
+
+        db.WeightLogs.Add(weightLog);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return Results.Ok(new WeightLogDto(weightLog.Id, weightLog.Weight, weightLog.RecordedAt, weightLog.Notes));
+    }
+
+    private static async Task<IResult> GetWeightHistoryAsync(
+        Guid patientProfileId,
+        ClaimsPrincipal principal,
+        ToolbcDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var doctorId = principal.GetUserId();
+        var isDoctorPatient = await db.PatientProfiles
+            .Include(p => p.AssignedDoctor)
+            .AnyAsync(p => p.Id == patientProfileId && p.AssignedDoctor!.UserId == doctorId, cancellationToken);
+        
+        if (!isDoctorPatient)
+        {
+            return Results.NotFound(new { error = "Pasien tidak ditemukan atau bukan pasien Anda." });
+        }
+
+        var logs = (await db.WeightLogs
+            .AsNoTracking()
+            .Where(w => w.PatientProfileId == patientProfileId)
+            .ToListAsync(cancellationToken))
+            .OrderByDescending(w => w.RecordedAt)
+            .Select(w => new WeightLogDto(w.Id, w.Weight, w.RecordedAt, w.Notes))
+            .ToList();
+
+        return Results.Ok(logs);
+    }
+
+    private static async Task<IResult> AddLabResultAsync(
+        Guid patientProfileId,
+        LabResultRequest request,
+        ClaimsPrincipal principal,
+        ToolbcDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var doctorId = principal.GetUserId();
+        var doctor = await db.DoctorProfiles.Include(d => d.User).FirstOrDefaultAsync(d => d.UserId == doctorId, cancellationToken);
+        var isDoctorPatient = await db.PatientProfiles
+            .Include(p => p.AssignedDoctor)
+            .AnyAsync(p => p.Id == patientProfileId && p.AssignedDoctor!.UserId == doctorId, cancellationToken);
+        
+        if (doctor is null || !isDoctorPatient)
+        {
+            return Results.NotFound(new { error = "Pasien tidak ditemukan atau bukan pasien Anda." });
+        }
+
+        var labResult = new LabResult
+        {
+            PatientProfileId = patientProfileId,
+            TestType = request.TestType,
+            Result = request.Result,
+            TestedAt = DateTimeOffset.UtcNow,
+            Notes = request.Notes,
+            RecordedBy = doctor.User.FullName
+        };
+
+        db.LabResults.Add(labResult);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return Results.Ok(new LabResultDto(labResult.Id, labResult.TestType, labResult.Result, labResult.TestedAt, labResult.Notes, labResult.RecordedBy));
+    }
+
+    private static async Task<IResult> GetLabResultsAsync(
+        Guid patientProfileId,
+        ClaimsPrincipal principal,
+        ToolbcDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var doctorId = principal.GetUserId();
+        var isDoctorPatient = await db.PatientProfiles
+            .Include(p => p.AssignedDoctor)
+            .AnyAsync(p => p.Id == patientProfileId && p.AssignedDoctor!.UserId == doctorId, cancellationToken);
+        
+        if (!isDoctorPatient)
+        {
+            return Results.NotFound(new { error = "Pasien tidak ditemukan atau bukan pasien Anda." });
+        }
+
+        var results = (await db.LabResults
+            .AsNoTracking()
+            .Where(l => l.PatientProfileId == patientProfileId)
+            .ToListAsync(cancellationToken))
+            .OrderByDescending(l => l.TestedAt)
+            .Select(l => new LabResultDto(l.Id, l.TestType, l.Result, l.TestedAt, l.Notes, l.RecordedBy))
+            .ToList();
+
+        return Results.Ok(results);
     }
 }

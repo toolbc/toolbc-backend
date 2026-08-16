@@ -11,7 +11,8 @@ public sealed record TreatmentSummaryDto(
     int AdherencePercent,
     int StreakDays,
     string MedicineSummary,
-    string NextDoseLabel);
+    string NextDoseLabel,
+    TreatmentPhase Phase);
 
 public sealed record PatientDashboardResponse(
     UserResponse Patient,
@@ -65,7 +66,9 @@ public sealed record DoctorPatientDto(
     int TreatmentDay,
     int AdherencePercent,
     RiskLevel CurrentRisk,
-    string Badge);
+    string Badge,
+    bool PhaseTransitionDue,
+    decimal? Weight);
 
 public sealed record AdherenceBucketDto(string Label, int Count);
 
@@ -75,3 +78,11 @@ public sealed record ReminderDto(
     string Message,
     ReminderStatus Status,
     DateTimeOffset ScheduledAt);
+
+public sealed record WeightRequest(decimal Weight, string? Notes = null);
+
+public sealed record WeightLogDto(Guid Id, decimal Weight, DateTimeOffset RecordedAt, string? Notes);
+
+public sealed record LabResultRequest(LabTestType TestType, LabResultValue Result, string? Notes = null);
+
+public sealed record LabResultDto(Guid Id, LabTestType TestType, LabResultValue Result, DateTimeOffset TestedAt, string? Notes, string? RecordedBy);
