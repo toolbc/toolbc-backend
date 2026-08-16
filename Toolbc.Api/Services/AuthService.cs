@@ -74,15 +74,16 @@ public sealed class AuthService(
                 User = user,
                 MedicalRecordNumber = CreateMedicalRecordNumber(),
                 AssignedDoctorId = request.AssignedDoctorId,
-                TreatmentStartDate = DateOnly.FromDateTime(DateTime.UtcNow)
+                TreatmentStartDate = DateOnly.FromDateTime(DateTime.UtcNow),
+                Comorbidities = request.Comorbidities
             };
 
             db.PatientProfiles.Add(patientProfile);
             db.TreatmentPlans.Add(new TreatmentPlan
             {
                 PatientProfile = patientProfile,
-                Phase = "Intensive",
-                MedicineSummary = "Rifampicin + Isoniazid",
+                Phase = TreatmentPhase.Intensive,
+                MedicineSummary = "Isoniazid (H) + Rifampicin (R) + Pyrazinamide (Z) + Ethambutol (E)",
                 TotalDays = 180,
                 Status = TreatmentStatus.Active
             });

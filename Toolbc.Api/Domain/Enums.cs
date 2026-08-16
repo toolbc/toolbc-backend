@@ -44,3 +44,26 @@ public enum NotificationType
     Alert = 2,
     Account = 3
 }
+
+public enum TreatmentPhase
+{
+    Intensive = 1,
+    Continuation = 2,
+    Completed = 3,
+    Extended = 4
+}
+
+public enum LabTestType
+{
+    TCM_GeneXpert = 1,
+    BTA_Smear = 2,
+    ChestXRay = 3,
+    Other = 4
+}
+
+public enum LabResultValue
+{
+    Positive = 1,
+    Negative = 2,
+    Indeterminate = 3
+}

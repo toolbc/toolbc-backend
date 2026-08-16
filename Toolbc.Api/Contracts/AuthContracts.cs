@@ -10,7 +10,8 @@ public sealed record CreateUserRequest(
     string Password,
     UserRole Role,
     string? Note = null,
-    Guid? AssignedDoctorId = null);
+    Guid? AssignedDoctorId = null,
+    string? Comorbidities = null);
 
 public sealed record UserResponse(
     Guid Id,

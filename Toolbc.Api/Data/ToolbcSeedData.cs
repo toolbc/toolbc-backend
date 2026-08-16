@@ -56,15 +56,18 @@ public static class ToolbcSeedData
             UserId = patientUser.Id,
             MedicalRecordNumber = "HE-9201",
             AssignedDoctorId = doctor.Id,
-            TreatmentStartDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-23))
+            TreatmentStartDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-23)),
+            Weight = 55m,
+            WeightRecordedAt = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-23)).ToDateTime(TimeOnly.MinValue),
+            Comorbidities = null
         };
 
         var treatmentPlan = new TreatmentPlan
         {
             Id = Guid.Parse("66666666-6666-6666-6666-666666666666"),
             PatientProfileId = patient.Id,
-            Phase = "Intensive",
-            MedicineSummary = "Rifampicin + Isoniazid",
+            Phase = TreatmentPhase.Intensive,
+            MedicineSummary = "Isoniazid (H) + Rifampicin (R) + Pyrazinamide (Z) + Ethambutol (E)",
             TotalDays = 180,
             Status = TreatmentStatus.Active
         };
@@ -155,6 +158,24 @@ public static class ToolbcSeedData
             }
         };
 
+        var weightLog = new WeightLog
+        {
+            PatientProfileId = patient.Id,
+            Weight = 55m,
+            RecordedAt = patient.TreatmentStartDate.ToDateTime(TimeOnly.MinValue),
+            Notes = "Initial weight"
+        };
+
+        var labResult = new LabResult
+        {
+            PatientProfileId = patient.Id,
+            TestType = LabTestType.TCM_GeneXpert,
+            Result = LabResultValue.Positive,
+            TestedAt = patient.TreatmentStartDate.ToDateTime(TimeOnly.MinValue),
+            Notes = "Initial test",
+            RecordedBy = doctorUser.FullName
+        };
+
         db.Users.AddRange(admin, doctorUser, patientUser);
         db.DoctorProfiles.Add(doctor);
         db.PatientProfiles.Add(patient);
@@ -163,6 +184,8 @@ public static class ToolbcSeedData
         db.SymptomLogs.Add(symptoms);
         db.Reminders.AddRange(reminders);
         db.Notifications.AddRange(notifications);
+        db.WeightLogs.Add(weightLog);
+        db.LabResults.Add(labResult);
 
         await db.SaveChangesAsync();
     }

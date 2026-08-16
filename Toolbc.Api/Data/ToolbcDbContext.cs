@@ -13,6 +13,8 @@ public sealed class ToolbcDbContext(DbContextOptions<ToolbcDbContext> options) :
     public DbSet<SymptomLog> SymptomLogs => Set<SymptomLog>();
     public DbSet<Reminder> Reminders => Set<Reminder>();
     public DbSet<AppNotification> Notifications => Set<AppNotification>();
+    public DbSet<WeightLog> WeightLogs => Set<WeightLog>();
+    public DbSet<LabResult> LabResults => Set<LabResult>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -53,6 +55,18 @@ public sealed class ToolbcDbContext(DbContextOptions<ToolbcDbContext> options) :
 
         modelBuilder.Entity<AppNotification>()
             .Property(notification => notification.Type)
+            .HasConversion<string>();
+
+        modelBuilder.Entity<TreatmentPlan>()
+            .Property(plan => plan.Phase)
+            .HasConversion<string>();
+            
+        modelBuilder.Entity<LabResult>()
+            .Property(result => result.TestType)
+            .HasConversion<string>();
+
+        modelBuilder.Entity<LabResult>()
+            .Property(result => result.Result)
             .HasConversion<string>();
     }
 }

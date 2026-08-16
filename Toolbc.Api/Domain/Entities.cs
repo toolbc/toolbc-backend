@@ -24,6 +24,9 @@ public sealed class PatientProfile
     public Guid? AssignedDoctorId { get; set; }
     public DoctorProfile? AssignedDoctor { get; set; }
     public DateOnly TreatmentStartDate { get; set; }
+    public decimal? Weight { get; set; }
+    public DateTimeOffset? WeightRecordedAt { get; set; }
+    public string? Comorbidities { get; set; }
     public TreatmentPlan? TreatmentPlan { get; set; }
 }
 
@@ -41,8 +44,8 @@ public sealed class TreatmentPlan
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid PatientProfileId { get; set; }
     public PatientProfile PatientProfile { get; set; } = null!;
-    public string Phase { get; set; } = "Intensive";
-    public string MedicineSummary { get; set; } = "Rifampicin + Isoniazid";
+    public TreatmentPhase Phase { get; set; } = TreatmentPhase.Intensive;
+    public string MedicineSummary { get; set; } = "Isoniazid (H) + Rifampicin (R) + Pyrazinamide (Z) + Ethambutol (E)";
     public int TotalDays { get; set; } = 180;
     public TreatmentStatus Status { get; set; } = TreatmentStatus.Active;
     public ICollection<MedicationDoseLog> DoseLogs { get; set; } = [];
@@ -93,4 +96,26 @@ public sealed class AppNotification
     public string Message { get; set; } = string.Empty;
     public bool IsRead { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class WeightLog
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid PatientProfileId { get; set; }
+    public PatientProfile PatientProfile { get; set; } = null!;
+    public decimal Weight { get; set; }
+    public DateTimeOffset RecordedAt { get; set; } = DateTimeOffset.UtcNow;
+    public string? Notes { get; set; }
+}
+
+public sealed class LabResult
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid PatientProfileId { get; set; }
+    public PatientProfile PatientProfile { get; set; } = null!;
+    public LabTestType TestType { get; set; }
+    public LabResultValue Result { get; set; }
+    public DateTimeOffset TestedAt { get; set; } = DateTimeOffset.UtcNow;
+    public string? Notes { get; set; }
+    public string? RecordedBy { get; set; }
 }

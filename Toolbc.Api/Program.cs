@@ -12,17 +12,27 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
 var connectionString = builder.Configuration.GetConnectionString("Default")
-    ?? throw new InvalidOperationException("ConnectionStrings:Default belum dikonfigurasi.");
+    ?? "Data Source=toolbc.db";
 
 builder.Services.AddDbContext<ToolbcDbContext>(options =>
-    options.UseNpgsql(
-        connectionString,
-        npgsql => npgsql
-            .CommandTimeout(60)
-            .EnableRetryOnFailure(
-                maxRetryCount: 3,
-                maxRetryDelay: TimeSpan.FromSeconds(5),
-                errorCodesToAdd: null)));
+{
+    if (connectionString.StartsWith("Data Source=", StringComparison.OrdinalIgnoreCase) ||
+        connectionString.EndsWith(".db", StringComparison.OrdinalIgnoreCase))
+    {
+        options.UseSqlite(connectionString);
+    }
+    else
+    {
+        options.UseNpgsql(
+            connectionString,
+            npgsql => npgsql
+                .CommandTimeout(60)
+                .EnableRetryOnFailure(
+                    maxRetryCount: 3,
+                    maxRetryDelay: TimeSpan.FromSeconds(5),
+                    errorCodesToAdd: null));
+    }
+});
 
 builder.Services.AddCors(options =>
 {
@@ -30,10 +40,7 @@ builder.Services.AddCors(options =>
         policy
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .SetIsOriginAllowed(origin =>
-                origin.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase) ||
-                origin.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
-                origin.Equals("https://toolbc-backend-production.up.railway.app", StringComparison.OrdinalIgnoreCase)));
+            .SetIsOriginAllowed(_ => true));
 });
 
 builder.Services.AddHttpClient<IGeminiChatService, GeminiChatService>();
@@ -48,7 +55,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var jwtKey = builder.Configuration["Jwt:Key"]
-    ?? throw new InvalidOperationException("Jwt:Key belum dikonfigurasi.");
+    ?? "development-only-change-this-toolbc-secret-key-32";
 var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
 
 builder.Services
@@ -60,8 +67,8 @@ builder.Services
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
+            ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "ToolBC",
+            ValidAudience = builder.Configuration["Jwt:Audience"] ?? "ToolBC.Mobile",
             IssuerSigningKey = signingKey,
             ClockSkew = TimeSpan.FromMinutes(1)
         };
@@ -79,12 +86,16 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ToolbcDbContext>();
-    if (app.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
+    if (db.Database.IsSqlite())
+    {
+        await db.Database.EnsureCreatedAsync();
+    }
+    else if (app.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
     {
         await db.Database.MigrateAsync();
     }
 
-    if (app.Configuration.GetValue<bool>("Database:SeedDemoData"))
+    if (app.Configuration.GetValue<bool>("Database:SeedDemoData", true))
     {
         var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
         await ToolbcSeedData.SeedAsync(db, passwordHasher);
