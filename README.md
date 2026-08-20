@@ -1,153 +1,101 @@
 # ToolBC Backend
 
-Backend .NET untuk aplikasi Flutter ToolBC/TBC Care. Database production/development diarahkan ke Supabase PostgreSQL, sedangkan login memakai JWT custom backend dan tabel `Users` milik aplikasi.
+Backend server berbasis **ASP.NET Core 8 Web API** untuk sistem manajemen perawatan pasien Tuberkulosis (ToolBC / TBC Care).
 
-## Stack
+---
 
-- ASP.NET Core Web API `net8.0`
-- EF Core + PostgreSQL via `Npgsql`
-- Supabase PostgreSQL sebagai database
-- JWT Bearer auth
-- Swagger/OpenAPI
-- OpenAI/Gemini chat proxy via konfigurasi backend
+## 🛠️ Tech Stack & Arsitektur
 
-## Menjalankan
+- **Framework**: ASP.NET Core Web API (.NET 8.0)
+- **Database & ORM**: Entity Framework Core 8 dengan dukungan **PostgreSQL (Supabase)** & **SQLite (Local Development)**
+- **Authentication**: JWT (_JSON Web Tokens_) dengan Role-Based Access Control (RBAC: `Patient`, `Doctor`, `Admin`)
+- **AI Engine / Chatbot**: Proxy multi-provider cerdas mendukung **OpenAI-compatible router** (seperti `9router.diwanparker.tech` / `ag/gemini-3.6-flash-medium`) dan **Google Gemini API** asli dengan mekanisme fallback otomatis
+- **Documentation**: Swagger / OpenAPI UI
 
-Restore tool dan package:
+---
 
-```powershell
-dotnet tool restore
-dotnet restore
-```
+## ⚡ Cara Menjalankan
 
-Isi connection string Supabase lewat user-secrets:
+### 1. Mode Lokal (SQLite & Auto-Seed Demo)
+
+Secara default, saat dijalankan dalam profile `http`, backend menggunakan SQLite lokal `toolbc.db` dan otomatis mengisinya dengan data contoh:
 
 ```powershell
-dotnet user-secrets init --project .\Toolbc.Api\Toolbc.Api.csproj
-dotnet user-secrets set "ConnectionStrings:Default" "<SUPABASE_POSTGRES_CONNECTION_STRING>" --project .\Toolbc.Api\Toolbc.Api.csproj
-```
+# Masuk ke direktori backend
+cd toolbc-backend
 
-Atau pakai helper script:
-
-```powershell
-.\scripts\set-supabase-connection.ps1 "<SUPABASE_POSTGRES_CONNECTION_STRING>"
-```
-
-Apply schema ke Supabase:
-
-```powershell
-dotnet tool run dotnet-ef database update --project .\Toolbc.Api\Toolbc.Api.csproj --startup-project .\Toolbc.Api\Toolbc.Api.csproj
-```
-
-Atau:
-
-```powershell
-.\scripts\apply-database.ps1
-```
-
-Alternatif manual: buka Supabase SQL Editor lalu jalankan isi file `supabase/toolbc_schema_supabase.sql`.
-
-Jalankan API:
-
-```powershell
+# Jalankan API
 dotnet run --project .\Toolbc.Api\Toolbc.Api.csproj --launch-profile http
 ```
 
-API berjalan di:
+API akan aktif di:
 
-- `http://localhost:5272`
-- Swagger: `http://localhost:5272/swagger`
-- Health check: `http://localhost:5272/api/health`
+- **Base URL**: `http://localhost:5272`
+- **Swagger Documentation**: `http://localhost:5272/swagger`
+- **Health Check**: `http://localhost:5272/api/health`
 
-## Supabase Connection String
+---
 
-Di Supabase:
+## 🤖 Konfigurasi AI Chatbot (OpenAI / Gemini)
 
-1. Buka project.
-2. Masuk ke `Project Settings`.
-3. Buka menu `Database`.
-4. Cari bagian `Connection string`.
-5. Pilih mode `Transaction pooler` bila tersedia.
-6. Copy string yang berisi host, port, database, user, dan password.
+Untuk mengamankan API key, gunakan file `appsettings.Local.json` di dalam folder `Toolbc.Api/` (file ini otomatis diabaikan oleh `.gitignore` sehingga tidak akan bocor ke GitHub):
 
-Format yang dibutuhkan backend:
-
-```text
-Host=<host>;Port=6543;Database=postgres;Username=<user>;Password=<password>;Ssl Mode=Require;Trust Server Certificate=true
-```
-
-Jika memakai direct connection, port biasanya `5432`. Jika memakai transaction pooler, port biasanya `6543`.
-
-## Seed Data
-
-Seed demo dimatikan secara default:
+Buat/edit `toolbc-backend/Toolbc.Api/appsettings.Local.json`:
 
 ```json
-"Database": {
-  "ApplyMigrationsOnStartup": false,
-  "SeedDemoData": false
-}
-```
-
-Database Supabase akan dibuat kosong sesuai schema. Buat admin pertama lewat endpoint bootstrap. Endpoint ini hanya jalan kalau tabel `Users` masih kosong:
-
-```http
-POST /api/bootstrap/admin
-Content-Type: application/json
-
 {
-  "fullName": "Admin ToolBC",
-  "email": "admin@admin.com",
-  "password": "Admin123!",
-  "role": "Admin"
+  "AI": {
+    "Provider": "openai"
+  },
+  "OpenAI": {
+    "Endpoint": "<YOUR_ENDPOINT_9ROUTER>",
+    "Model": "ag/gemini-3.6-flash-medium",
+    "ApiKey": "<YOUR_API_KEY>"
+  }
 }
 ```
 
-Jika API sudah berjalan, bisa juga pakai helper:
+---
+
+## 🗄️ Konfigurasi Supabase PostgreSQL (Production)
+
+Gunakan _user-secrets_ atau masukkan string koneksi Supabase di `appsettings.Local.json`:
 
 ```powershell
-.\scripts\bootstrap-admin.ps1
+dotnet user-secrets set "ConnectionStrings:Default" "Host=<host>;Port=6543;Database=postgres;Username=<user>;Password=<password>;Ssl Mode=Require;Trust Server Certificate=true" --project .\Toolbc.Api\Toolbc.Api.csproj
 ```
 
-## Endpoint Utama
-
-- `POST /api/auth/login`
-- `POST /api/bootstrap/admin`
-- `POST /api/admin/users`
-- `GET /api/admin/users`
-- `GET /api/admin/doctors`
-- `GET /api/patients/me/dashboard`
-- `POST /api/patients/me/medication-logs`
-- `POST /api/patients/me/symptom-logs`
-- `GET /api/patients/me/history`
-- `GET /api/notifications`
-- `POST /api/chat/reply`
-- `GET /api/doctors/me/dashboard`
-- `GET /api/doctors/me/patients`
-- `GET /api/doctors/me/adherence`
-- `GET /api/doctors/me/reminders`
-- `PATCH /api/reminders/{id}/status?status=Resolved`
-
-## AI Providers
-
-Backend chat mendukung OpenAI dan Gemini. Default provider memakai OpenAI bila `OpenAI:ApiKey` tersedia, lalu fallback ke Gemini kalau OpenAI error, rate-limit, atau quota habis.
-
-Untuk memakai OpenAI dari backend:
+Jalankan migrasi database:
 
 ```powershell
-dotnet user-secrets set "AI:Provider" "openai" --project .\Toolbc.Api\Toolbc.Api.csproj
-dotnet user-secrets set "OpenAI:ApiKey" "<api-key>" --project .\Toolbc.Api\Toolbc.Api.csproj
-dotnet user-secrets set "OpenAI:Model" "gpt-5-mini" --project .\Toolbc.Api\Toolbc.Api.csproj
+dotnet tool restore
+dotnet tool run dotnet-ef database update --project .\Toolbc.Api\Toolbc.Api.csproj
 ```
 
-Untuk memakai Gemini dari backend:
+---
 
-```powershell
-dotnet user-secrets set "Gemini:ApiKey1" "<primary-gemini-api-key>" --project .\Toolbc.Api\Toolbc.Api.csproj
-dotnet user-secrets set "Gemini:ApiKey2" "<backup-gemini-api-key>" --project .\Toolbc.Api\Toolbc.Api.csproj
-dotnet user-secrets set "Gemini:Model" "gemini-2.5-flash" --project .\Toolbc.Api\Toolbc.Api.csproj
-```
+## 📋 Endpoint Utama
 
-`Gemini:ApiKeys:0`, `Gemini:ApiKeys:1`, dan seterusnya juga didukung bila hosting provider lebih nyaman memakai array config.
+| Method  | Endpoint                           | Deskripsi                                               |
+| ------- | ---------------------------------- | ------------------------------------------------------- |
+| `POST`  | `/api/auth/login`                  | Autentikasi pengguna & generate JWT Token               |
+| `POST`  | `/api/bootstrap/admin`             | Registrasi akun admin awal (hanya aktif jika DB kosong) |
+| `POST`  | `/api/chat/reply`                  | Konsultasi edukasi AI (mendukung chat history)          |
+| `GET`   | `/api/patients/me/dashboard`       | Ambil data status terapi, hari aktif, & target pasien   |
+| `POST`  | `/api/patients/me/medication-logs` | Pencatatan konfirmasi minum obat harian                 |
+| `POST`  | `/api/patients/me/symptom-logs`    | Input checkup gejala & triage risiko otomatis           |
+| `GET`   | `/api/patients/me/history`         | Riwayat kepatuhan & log pengobatan                      |
+| `GET`   | `/api/doctors/me/dashboard`        | Dasbor dokter, antrian eskalasi, & pasien binaan        |
+| `GET`   | `/api/doctors/me/adherence`        | Analisis kepatuhan & klaster risiko pasien              |
+| `PATCH` | `/api/reminders/{id}/status`       | Update status pengingat/eskalasi pasien                 |
+| `POST`  | `/api/admin/users`                 | Pembuatan akun pasien/dokter oleh administrator         |
 
-Jangan taruh API key di Flutter.
+---
+
+## 🔑 Akun Demo Siap Pakai
+
+| Role       | Email               | Password     |
+| ---------- | ------------------- | ------------ |
+| **Pasien** | `davina@pasien.com` | `Pasien123!` |
+| **Dokter** | `arya@dokter.com`   | `Dokter123!` |
+| **Admin**  | `admin@admin.com`   | `Admin123!`  |
