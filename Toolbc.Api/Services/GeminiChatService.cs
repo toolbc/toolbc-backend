@@ -18,9 +18,12 @@ public sealed class GeminiChatService(
     public async Task<ChatReplyResponse> GenerateReplyAsync(ChatReplyRequest request, CancellationToken cancellationToken)
     {
         var provider = PreferredProvider();
-        var providers = provider == "openai"
-            ? new[] { "openai", "gemini" }
-            : new[] { "gemini", "openai" };
+        var providers = provider switch
+        {
+            "openai" => new[] { "openai", "gemini" },
+            _ => new[] { "gemini", "openai" }
+        };
+
         var hasOpenAi = !string.IsNullOrWhiteSpace(configuration["OpenAI:ApiKey"]);
         var hasGemini = GeminiApiKeys().Count > 0;
 
@@ -45,7 +48,6 @@ public sealed class GeminiChatService(
             catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
             {
                 logger.LogWarning(exception, "{Provider} provider failed; trying next configured provider.", item);
-                // Try the next configured provider before falling back.
             }
         }
 
@@ -55,32 +57,51 @@ public sealed class GeminiChatService(
     private async Task<string> GenerateOpenAiReplyAsync(ChatReplyRequest request, CancellationToken cancellationToken)
     {
         var apiKey = configuration["OpenAI:ApiKey"]!;
-        var model = configuration["OpenAI:Model"] ?? "gpt-5-mini";
-        var payload = new
+        var model = configuration["OpenAI:Model"] ?? "ag/gemini-3.6-flash-medium";
+        var endpoint = configuration["OpenAI:Endpoint"] ?? "https://9router.diwanparker.tech/v1/chat/completions";
+
+        if (!endpoint.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase) &&
+            !endpoint.EndsWith("/responses", StringComparison.OrdinalIgnoreCase))
         {
-            model,
-            instructions = SystemPrompt(request.Mode),
-            input = request.History.TakeLast(8).Select(turn => new
+            endpoint = endpoint.TrimEnd('/') + "/chat/completions";
+        }
+
+        var messages = new List<object>
+        {
+            new { role = "system", content = SystemPrompt(request.Mode) }
+        };
+
+        foreach (var turn in request.History.TakeLast(8))
+        {
+            messages.Add(new
             {
                 role = turn.FromUser ? "user" : "assistant",
                 content = turn.Text
-            }),
-            max_output_tokens = 360
+            });
+        }
+
+        var payload = new
+        {
+            model,
+            messages,
+            stream = false,
+            max_tokens = 500,
+            temperature = 0.4
         };
 
-        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses")
+        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = JsonContent.Create(payload)
         };
         requestMessage.Headers.Authorization = new("Bearer", apiKey);
 
         using var response = await httpClient.SendAsync(requestMessage, cancellationToken);
-        await EnsureSuccessAsync(response, "OpenAI", cancellationToken);
+        await EnsureSuccessAsync(response, "OpenAI-Compatible", cancellationToken);
 
         var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
-        var text = ExtractOpenAiText(json);
+        var text = ExtractChatCompletionsText(json);
         return string.IsNullOrWhiteSpace(text)
-            ? throw new InvalidOperationException("OpenAI response did not include text.")
+            ? throw new InvalidOperationException("AI response did not include valid text.")
             : text.Trim();
     }
 
@@ -208,39 +229,25 @@ public sealed class GeminiChatService(
         return normalized.Length <= 500 ? normalized : normalized[..500];
     }
 
-    private static string? ExtractOpenAiText(JsonElement body)
+    private static string? ExtractChatCompletionsText(JsonElement body)
     {
-        if (body.TryGetProperty("output_text", out var outputText) &&
-            outputText.ValueKind == JsonValueKind.String)
+        if (body.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array && choices.GetArrayLength() > 0)
+        {
+            var firstChoice = choices[0];
+            if (firstChoice.TryGetProperty("message", out var message) &&
+                message.TryGetProperty("content", out var content) &&
+                content.ValueKind == JsonValueKind.String)
+            {
+                return content.GetString();
+            }
+        }
+
+        if (body.TryGetProperty("output_text", out var outputText) && outputText.ValueKind == JsonValueKind.String)
         {
             return outputText.GetString();
         }
 
-        if (!body.TryGetProperty("output", out var output) || output.ValueKind != JsonValueKind.Array)
-        {
-            return null;
-        }
-
-        var chunks = new List<string>();
-        foreach (var item in output.EnumerateArray())
-        {
-            if (!item.TryGetProperty("content", out var content) ||
-                content.ValueKind != JsonValueKind.Array)
-            {
-                continue;
-            }
-
-            foreach (var part in content.EnumerateArray())
-            {
-                if (part.TryGetProperty("text", out var text) &&
-                    text.ValueKind == JsonValueKind.String)
-                {
-                    chunks.Add(text.GetString() ?? string.Empty);
-                }
-            }
-        }
-
-        return string.Join("\n", chunks);
+        return null;
     }
 
     private static string? ExtractGeminiText(JsonElement body)
@@ -291,9 +298,9 @@ public sealed class GeminiChatService(
         };
 
         return $"""
-            Kamu AI ToolBC/TBC Care untuk role {roleName}. Jawab singkat, ramah, Bahasa Indonesia.
+            Kamu AI ToolBC/TBC Care untuk role {roleName}. Jawab singkat, ramah, Bahasa Indonesia yang jelas dan mudah dipahami.
             ToolBC memantau pengobatan TBC, kepatuhan minum obat, checkup harian, reminder, riwayat progres, dan komunikasi perawatan.
-            Beri edukasi umum, bukan diagnosis atau pengganti dokter. Jangan ubah dosis/obat. Untuk gejala berat, sarankan bantuan medis segera.
+            Beri edukasi umum seputar kesehatan paru dan TBC, bukan diagnosis mutlak atau pengganti dokter. Jangan ubah dosis/obat pasien. Untuk gejala berat (seperti batuk berdarah banyak atau sesak napas berat), sarankan segera ke IGD / dokter penanggung jawab.
             """;
     }
 }
